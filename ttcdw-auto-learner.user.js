@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         学习公社云自动播放
 // @namespace    http://tampermonkey.net/
-// @version      0.7
-// @description  自动学习网课，完成未完成章节，支持3倍速播放
+// @version      0.9
+// @description  自动学习网课，完成未完成章节，支持3倍速播放，自动切换通识课/专业课
 // @author       yantianyv
 // @match        https://www.ttcdw.cn/p/uc/myClassroom/*
 // @match        https://www.ttcdw.cn/p/course/videorevision/*
@@ -209,6 +209,87 @@
             #auto-learner-video-log-panel::-webkit-scrollbar-thumb:hover {
                 background: rgba(255,255,255,0.4);
             }
+            /* 考核信息样式 */
+            #assessment-info {
+                background: rgba(255,255,255,0.95);
+                padding: 10px;
+                border-radius: 5px;
+                margin-bottom: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                border-left: 4px solid #4CAF50;
+            }
+            #assessment-info h3 {
+                margin: 0 0 8px 0;
+                color: #333;
+                font-size: 16px;
+            }
+            #assessment-info .info-item {
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 5px;
+                font-size: 12px;
+            }
+            #assessment-info .info-label {
+                color: #666;
+            }
+            #assessment-info .info-value {
+                color: #333;
+                font-weight: bold;
+            }
+            #assessment-info .completed {
+                color: #4CAF50;
+            }
+            #assessment-info .not-completed {
+                color: #FF5722;
+            }
+            #assessment-info .progress-bar {
+                width: 100%;
+                height: 8px;
+                background: #f0f0f0;
+                border-radius: 4px;
+                margin: 8px 0;
+                overflow: hidden;
+            }
+            #assessment-info .progress-fill {
+                height: 100%;
+                background: linear-gradient(90deg, #4CAF50, #8BC34A);
+                border-radius: 4px;
+                transition: width 0.5s ease;
+            }
+            /* 模块标签样式 */
+            #module-info {
+                background: rgba(255,255,255,0.95);
+                padding: 10px;
+                border-radius: 5px;
+                margin-bottom: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                border-left: 4px solid #2196F3;
+            }
+            #module-info h3 {
+                margin: 0 0 8px 0;
+                color: #333;
+                font-size: 16px;
+            }
+            #module-info .module-item {
+                display: flex;
+                justify-content: space-between;
+                margin-bottom: 5px;
+                font-size: 12px;
+            }
+            #module-info .module-label {
+                color: #666;
+            }
+            #module-info .module-value {
+                color: #333;
+                font-weight: bold;
+            }
+            #module-info .module-active {
+                color: #4CAF50;
+                font-weight: bold;
+            }
+            #module-info .module-inactive {
+                color: #666;
+            }
         `);
 
         const alertDiv = document.createElement('div');
@@ -326,6 +407,159 @@
         return element;
     };
 
+    // 工具函数：解析时间字符串为秒数
+    const parseTimeToSeconds = (timeStr) => {
+        if (!timeStr) return 0;
+
+        // 处理格式如: "02:01:08" 或 "01:00:15"
+        const parts = timeStr.split(':').map(Number);
+
+        if (parts.length === 3) {
+            // 格式: 时:分:秒
+            return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        } else if (parts.length === 2) {
+            // 格式: 分:秒
+            return parts[0] * 60 + parts[1];
+        } else if (parts.length === 1) {
+            // 格式: 秒
+            return parts[0];
+        }
+
+        return 0;
+    };
+
+    // 工具函数：解析考核信息
+    const parseAssessmentInfo = () => {
+        try {
+            // 从页面中提取考核信息
+            const tipsElement = document.querySelector('.assess-tips');
+            if (!tipsElement) return null;
+
+            const text = tipsElement.textContent || tipsElement.innerText;
+            log(`考核信息文本: ${text}`);
+
+            // 使用正则表达式提取数字
+            const requiredMatch = text.match(/考核要求\s*(\d+(?:\.\d+)?)\s*学时/);
+            const selectedMatch = text.match(/已选择\s*(\d+(?:\.\d+)?)\s*学时/);
+            const completedMatch = text.match(/已完成\s*(\d+(?:\.\d+)?)\s*学时/);
+
+            if (requiredMatch && selectedMatch && completedMatch) {
+                return {
+                    required: parseFloat(requiredMatch[1]),
+                    selected: parseFloat(selectedMatch[1]),
+                    completed: parseFloat(completedMatch[1])
+                };
+            }
+        } catch (error) {
+            log(`解析考核信息失败: ${error.message}`, 'error');
+        }
+
+        return null;
+    };
+
+    // 工具函数：计算课程已学学时
+    const calculateCourseCompletedHours = (durationStr, progressPercent) => {
+        const totalSeconds = parseTimeToSeconds(durationStr);
+        const totalHours = totalSeconds / 3600; // 转换为小时
+        return totalHours * (progressPercent / 100);
+    };
+
+    // 工具函数：检测当前学习模块类型
+    const detectLearningModule = () => {
+        try {
+            // 查找当前激活的学习模块
+            const assessItemPart = document.querySelector('.assessItem-part');
+            if (!assessItemPart) {
+                log('未找到模块选择区域，使用默认模块');
+                return 'unknown';
+            }
+
+            // 查找激活的模块
+            const activeModule = assessItemPart.querySelector('.assess-active');
+            if (activeModule) {
+                const moduleTitle = activeModule.querySelector('.item-title');
+                if (moduleTitle) {
+                    const moduleName = moduleTitle.textContent.trim();
+                    log(`检测到当前学习模块: ${moduleName}`);
+                    return moduleName;
+                }
+            }
+
+            // 如果没有激活的模块，检查所有模块
+            const allModules = assessItemPart.querySelectorAll('.item-title');
+            for (const module of allModules) {
+                const moduleName = module.textContent.trim();
+                log(`找到可用模块: ${moduleName}`);
+            }
+
+            // 默认返回第一个模块的名称
+            if (allModules.length > 0) {
+                return allModules[0].textContent.trim();
+            }
+
+        } catch (error) {
+            log(`检测学习模块失败: ${error.message}`, 'error');
+        }
+
+        return 'unknown';
+    };
+
+    // 工具函数：切换到专业课学习
+    const switchToProfessionalCourse = async () => {
+        try {
+            log('尝试切换到专业课学习...');
+
+            // 查找专业课学习选项卡
+            const professionalTab = Array.from(document.querySelectorAll('.assessItem-part .item-title'))
+                .find(item => item.textContent.trim() === '专业课学习');
+
+            if (professionalTab) {
+                const tabElement = professionalTab.closest('.item-one');
+                if (tabElement) {
+                    // 检查是否已经是当前激活的模块
+                    if (tabElement.classList.contains('assess-active')) {
+                        log('专业课学习已经是当前模块');
+                        return true;
+                    }
+
+                    // 点击专业课学习选项卡
+                    log('点击专业课学习选项卡...');
+                    tabElement.click();
+
+                    // 等待页面刷新/重新加载
+                    await delay(3000);
+
+                    // 检查是否切换成功
+                    const currentModule = detectLearningModule();
+                    if (currentModule === '专业课学习') {
+                        log('成功切换到专业课学习');
+                        return true;
+                    } else {
+                        log('切换到专业课学习后，检测到的模块为: ' + currentModule);
+                        // 尝试刷新页面
+                        log('尝试刷新页面...');
+                        location.reload();
+                        await delay(3000);
+                        return true;
+                    }
+                }
+            } else {
+                log('未找到专业课学习选项卡', 'warning');
+
+                // 尝试通过URL判断
+                if (window.location.href.includes('center')) {
+                    log('检测到在项目中心页面，可能需要重新进入');
+                    // 这里可以添加重新进入项目的逻辑
+                }
+            }
+
+            return false;
+        } catch (error) {
+            log(`切换到专业课学习失败: ${error.message}`, 'error');
+            return false;
+        }
+    };
+
     // 从URL中提取用户ID
     const extractUserId = () => {
         // 从当前URL提取用户ID
@@ -395,6 +629,7 @@
     // 主逻辑
     const main = async () => {
         log('脚本启动...');
+        log(`版本: 0.9 - 增加通识课/专业课自动切换功能`);
 
         try {
             // 如果是课程列表页面，保存课程列表URL
@@ -444,7 +679,7 @@
                     container.style.bottom = '20px';
                     container.style.left = '20px';
                     container.style.zIndex = '99999';
-                    container.style.width = '320px';
+                    container.style.width = '350px';
                     container.style.display = 'flex';
                     container.style.flexDirection = 'column';
                     container.style.gap = '10px';
@@ -513,8 +748,8 @@
                 if (!progressContainer) {
                     progressContainer = document.createElement('div');
                     progressContainer.id = 'auto-learner-progress-container';
-                    progressContainer.style.backgroundColor = 'rgba(255,255,255,0.9)';
-                    progressContainer.style.padding = '10px';
+                    progressContainer.style.backgroundColor = 'rgba(255,255,255,0.95)';
+                    progressContainer.style.padding = '15px';
                     progressContainer.style.borderRadius = '5px';
                     progressContainer.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
                     container.appendChild(progressContainer);
@@ -524,129 +759,131 @@
                 showAlert('脚本正在初始化', 'info');
                 await delay(500);
 
-                // ============ 改进的未完成课程检查逻辑 ============
-                const allRows = Array.from(document.querySelectorAll('.el-table__row'));
-                log(`共找到 ${allRows.length} 个课程`);
+                // ============ 检测当前学习模块 ============
+                const currentModule = detectLearningModule();
+                log(`当前学习模块: ${currentModule}`);
 
-                const unfinishedCourses = allRows.filter(row => {
-                    const progressTextElement = row.querySelector('.el-progress__text');
-                    if (!progressTextElement) {
-                        log(`课程 ${row.querySelector('.course-name')?.textContent || '未知'} 没有进度信息，视为未完成`);
-                        return true; // 没有进度信息视为未完成
-                    }
+                // 显示模块信息
+                const assessItemPart = document.querySelector('.assessItem-part');
+                let moduleInfoHTML = '';
+                if (assessItemPart) {
+                    const allModules = assessItemPart.querySelectorAll('.item-title');
+                    moduleInfoHTML = `
+                        <div id="module-info">
+                            <h3>学习模块</h3>
+                            ${Array.from(allModules).map(module => {
+                                const moduleName = module.textContent.trim();
+                                const isActive = module.closest('.item-one').classList.contains('assess-active');
+                                return `
+                                    <div class="module-item">
+                                        <span class="module-label">${moduleName}</span>
+                                        <span class="module-value ${isActive ? 'module-active' : 'module-inactive'}">
+                                            ${isActive ? '✓ 当前' : ''}
+                                        </span>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    `;
+                }
 
-                    const progressText = progressTextElement.textContent.trim();
-                    const match = progressText.match(/(\d+)/);
-                    if (!match) {
-                        log(`课程 ${row.querySelector('.course-name')?.textContent || '未知'} 进度文本无法解析: ${progressText}，视为未完成`);
-                        return true; // 无法解析进度视为未完成
-                    }
+                // ============ 获取考核信息 ============
+                const assessmentInfo = parseAssessmentInfo();
+                if (assessmentInfo) {
+                    log(`考核要求: ${assessmentInfo.required}学时, 已选择: ${assessmentInfo.selected}学时, 已完成: ${assessmentInfo.completed}学时`);
 
-                    const progress = parseInt(match[1], 10);
-                    const isUnfinished = progress < 100;
-
-                    log(`课程: ${row.querySelector('.course-name')?.textContent || '未知'}, 进度: ${progressText} (${progress}%), 是否未完成: ${isUnfinished}`);
-                    return isUnfinished; // 进度小于100%视为未完成
-                });
-
-                log(`找到 ${unfinishedCourses.length} 个未完成课程`);
-
-                if (unfinishedCourses.length > 0) {
-                    // 移除之前可能存在的current-course类
-                    document.querySelectorAll('.el-table__row.current-course').forEach(row => {
-                        row.classList.remove('current-course');
-                    });
-
-                    const course = unfinishedCourses[0];
-                    const courseName = course.querySelector('.course-name')?.textContent || '未知课程';
-                    const durationCell = course.querySelector('.el-table_1_column_2 .cell');
-                    const duration = durationCell ? durationCell.firstElementChild?.textContent?.trim() : '未知时长';
-                    const progressText = course.querySelector('.el-progress__text')?.textContent.trim() || '0%';
-
-                    // 双重检查进度
-                    const match = progressText.match(/(\d+)/);
-                    const progressPercent = match ? parseInt(match[1], 10) : 0;
-
-                    if (progressPercent >= 100) {
-                        log(`警告：选择的课程进度已经是 ${progressPercent}%，可能存在显示延迟`);
-                        log('刷新页面重新检查...');
-                        await delay(2000);
-                        location.reload();
-                        return;
-                    }
-
-                    course.classList.add('current-course'); // 标记当前课程
-                    log(`开始学习未完成课程: ${courseName}, 时长: ${duration}, 当前进度: ${progressText}`);
-
-                    // 初始化剩余时间(默认30分钟)
-                    let remainingSeconds = 30 * 60;
-
-                    // 计算剩余时间
-                    const timeMatch = duration.match(/(\d+):(\d+):(\d+)/) || duration.match(/(\d+):(\d+)/);
-                    if (timeMatch) {
-                        const totalSeconds = timeMatch[3]
-                            ? parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseInt(timeMatch[3])
-                            : parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]);
-                        remainingSeconds = Math.round(totalSeconds * (1 - progressPercent / 100));
-
-                        // 重要修改：由于视频页使用3倍速播放，剩余时间需要除以3
-                        const originalRemainingSeconds = remainingSeconds; // 保存原始剩余时间用于日志
-                        const adjustedRemainingSeconds = Math.round(remainingSeconds / 3); // 3倍速下的实际剩余时间
-
-                        log(`原始剩余时间: ${Math.floor(originalRemainingSeconds / 60)}分${originalRemainingSeconds % 60}秒`);
-                        log(`3倍速后剩余时间: ${Math.floor(adjustedRemainingSeconds / 60)}分${adjustedRemainingSeconds % 60}秒`);
-                        remainingSeconds = adjustedRemainingSeconds; // 使用调整后的时间
-
-                        // 创建动态进度条
-                        progressContainer.innerHTML = `
-                            <div style="margin-bottom: 5px; font-weight: bold;">${courseName}</div>
-                            <div id="remaining-time" style="margin-bottom: 5px;">剩余时间: ${Math.floor(remainingSeconds / 60)}分${remainingSeconds % 60}秒（3倍速预估）</div>
-                            <div style="font-size: 10px; color: #666; margin-bottom: 5px;">原始时长: ${duration} | 3倍速播放</div>
-                            <div style="width: 300px; height: 20px; background: #f0f0f0; border-radius: 10px; overflow: hidden; position: relative; display: flex; align-items: center;">
-                                <div id="progress-bar" class="cool-progress-bar" style="width: ${progressPercent}%; height: 100%;"></div>
-                                <div id="progress-text" style="position: absolute; right: 10px; font-size: 12px; font-weight: bold; color: #333;">
-                                    ${progressText}
-                                </div>
+                    // 显示考核信息
+                    const assessmentProgress = Math.min(100, (assessmentInfo.completed / assessmentInfo.required) * 100);
+                    progressContainer.innerHTML = moduleInfoHTML + `
+                        <div id="assessment-info">
+                            <h3>考核进度 (${currentModule})</h3>
+                            <div class="info-item">
+                                <span class="info-label">考核要求:</span>
+                                <span class="info-value">${assessmentInfo.required}学时</span>
                             </div>
-                        `;
+                            <div class="info-item">
+                                <span class="info-label">已选择课程:</span>
+                                <span class="info-value">${assessmentInfo.selected}学时</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">已完成:</span>
+                                <span class="info-value ${assessmentInfo.completed >= assessmentInfo.required ? 'completed' : 'not-completed'}">
+                                    ${assessmentInfo.completed}学时 (${assessmentProgress.toFixed(1)}%)
+                                </span>
+                            </div>
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: ${assessmentProgress}%"></div>
+                            </div>
+                            <div style="text-align: center; font-size: 12px; color: #666;">
+                                ${assessmentInfo.completed >= assessmentInfo.required ? '✅ 考核已完成' : `还需完成 ${(assessmentInfo.required - assessmentInfo.completed).toFixed(2)} 学时`}
+                            </div>
+                        </div>
+                    `;
 
-                        // 动态更新进度条
-                        const progressBar = document.getElementById('progress-bar');
-                        const remainingTimeEl = document.getElementById('remaining-time');
-                        const startTime = Date.now();
-                        const endTime = startTime + remainingSeconds * 1000;
+                    // 如果已完成的学时已经达到考核要求
+                    if (assessmentInfo.completed >= assessmentInfo.required) {
+                        log(`✅ ${currentModule}考核已完成! 已完成 ${assessmentInfo.completed}学时，达到要求 ${assessmentInfo.required}学时`);
+                        showAlert(`${currentModule}考核已完成！已完成 ${assessmentInfo.completed}学时，达到要求 ${assessmentInfo.required}学时`, 'success');
 
-                        const updateInterval = setInterval(() => {
-                            const now = Date.now();
-                            if (now >= endTime) {
-                                clearInterval(updateInterval);
-                                progressBar.style.width = '100%';
-                                progressBar.textContent = '100%';
-                                remainingTimeEl.textContent = '剩余时间: 0分0秒';
+                        // 检查当前模块
+                        if (currentModule === '通识课学习') {
+                            // 通识课完成，尝试切换到专业课
+                            log('通识课已完成，尝试切换到专业课学习...');
+                            const switched = await switchToProfessionalCourse();
 
-                                // 启动60秒倒计时
-                                progressContainer.innerHTML = `
-                                    <div style="margin-bottom: 10px; font-weight: bold; font-size: 16px; color: #FF5722;">${courseName}</div>
-                                    <div class="countdown" id="countdown-timer" style="font-size: 28px; margin-bottom: 15px;">60</div>
-                                    <div style="display: flex; justify-content: center; margin-bottom: 10px;">
-                                        <div style="width: 300px; height: 30px; background: #f0f0f0; border-radius: 15px; overflow: hidden; box-shadow: 0 0 10px rgba(255,87,34,0.3);">
-                                            <div class="cool-progress-bar" style="width: 100%; background: linear-gradient(90deg, #FF5722, #FF9800);
-                                                display: flex; align-items: center; justify-content: center; color: white; font-size: 14px; font-weight: bold;">
-                                                已完成!
-                                            </div>
+                            if (switched) {
+                                log('切换到专业课学习成功，等待页面重新加载...');
+                                await delay(3000);
+
+                                // 重新开始处理课程列表页
+                                retryCount = 0;
+                                continue;
+                            } else {
+                                log('切换到专业课失败，继续检查其他逻辑', 'warning');
+                            }
+                        } else if (currentModule === '专业课学习') {
+                            log('专业课已完成，所有考核完成');
+                            // 继续原有逻辑
+                        } else {
+                            log(`未知模块 ${currentModule} 已完成，继续处理`);
+                        }
+
+                        // 检查下一页按钮
+                        try {
+                            const nextPageBtn = await waitForClickableElement('.btn-next:not([disabled])', 5000).catch(() => null);
+                            if (nextPageBtn) {
+                                log('跳转到下一页...');
+                                await safeClick('.btn-next:not([disabled])');
+                                await waitForElement('.el-table__body', 5000);
+                                log('下一页加载完成');
+                                retryCount = 0;
+                                continue;
+                            } else {
+                                // 显示完成信息
+                                progressContainer.innerHTML = moduleInfoHTML + `
+                                    <div id="assessment-info">
+                                        <h3>🎉 恭喜！所有考核已完成</h3>
+                                        <div class="info-item">
+                                            <span class="info-label">考核要求:</span>
+                                            <span class="info-value">${assessmentInfo.required}学时</span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">已完成:</span>
+                                            <span class="info-value completed">${assessmentInfo.completed}学时</span>
+                                        </div>
+                                        <div style="text-align: center; margin-top: 15px;">
+                                            <div class="countdown" id="countdown-timer" style="font-size: 28px; margin-bottom: 15px;">10</div>
+                                            <div style="color: #888; font-size: 12px;">倒计时结束后将自动刷新页面</div>
                                         </div>
                                     </div>
-                                    <div style="text-align: center; color: #888; font-size: 12px;">倒计时结束后将自动刷新页面</div>
                                 `;
 
-                                let countdown = 60;
+                                let countdown = 10;
                                 const countdownEl = document.getElementById('countdown-timer');
                                 const countdownInterval = setInterval(() => {
                                     countdown--;
                                     countdownEl.textContent = countdown;
-                                    countdownEl.style.color = countdown <= 10 ? '#FF0000' : '#FF5722';
-                                    countdownEl.style.textShadow = countdown <= 10 ? '0 0 10px rgba(255,0,0,0.7)' : '0 0 5px rgba(255,87,34,0.5)';
-                                    countdownEl.style.transform = countdown <= 10 ? 'scale(1.2)' : 'scale(1)';
+                                    countdownEl.style.color = countdown <= 3 ? '#FF0000' : '#4CAF50';
 
                                     if (countdown <= 0) {
                                         clearInterval(countdownInterval);
@@ -656,103 +893,123 @@
                                 }, 1000);
                                 return;
                             }
-
-                            const elapsed = now - startTime;
-                            const newProgress = progressPercent + (elapsed / (remainingSeconds * 1000)) * (100 - progressPercent);
-                            const newRemaining = Math.max(0, remainingSeconds - Math.floor(elapsed / 1000));
-
-                            progressBar.style.width = `${newProgress}%`;
-                            document.getElementById('progress-text').textContent = `${Math.round(newProgress)}%`;
-                            remainingTimeEl.textContent = `剩余时间: ${Math.floor(newRemaining / 60)}分${newRemaining % 60}秒（3倍速预估）`;
-
-                            // 同步更新原生进度条
-                            const currentCourse = document.querySelector('.el-table__row.current-course');
-                            if (currentCourse) {
-                                const nativeProgress = currentCourse.querySelector('.el-progress-bar__inner');
-                                if (nativeProgress) {
-                                    nativeProgress.style.width = `${newProgress}%`;
-                                }
-                                const nativeProgressText = currentCourse.querySelector('.el-progress__text');
-                                if (nativeProgressText) {
-                                    nativeProgressText.textContent = `${Math.round(newProgress)}%`;
-                                }
-                            }
-                        }, 1000);
-                    }
-
-                    const studyBtn = course.querySelector('.study-btn');
-                    if (studyBtn) {
-                        studyBtn.click();
-                        log('已点击学习按钮');
-
-                        // 延迟6秒后开始计时
-                        await delay(6000);
-                        log('开始学习时长计时');
-                        if (window.studyTimeInterval) {
-                            clearInterval(window.studyTimeInterval);
+                        } catch (error) {
+                            log(`翻页失败: ${error.message}`, 'error');
+                            throw error;
                         }
-
-                        // 添加页面卸载时的清理
-                        window.addEventListener('beforeunload', () => {
-                            if (window.studyTimeInterval) {
-                                clearInterval(window.studyTimeInterval);
-                            }
-                        });
-
-                        if (remainingSeconds > 0) {
-                            // 等待课程剩余时长
-                            log(`等待课程剩余时长(3倍速): ${Math.floor(remainingSeconds / 60)}分${remainingSeconds % 60}秒`);
-                            await delay((remainingSeconds + 54) * 1000);
-
-                            // 刷新页面
-                            log('课程时长等待完成，刷新页面');
-                            clearInterval(window.studyTimeInterval);
-                            location.reload();
-                        } else {
-                            log('无需等待，立即刷新');
-                            location.reload();
-                        }
-                        return;
-                    } else {
-                        log('未找到学习按钮，尝试刷新页面', 'error');
-                        location.reload();
                     }
+                } else {
+                    log('无法获取考核信息，使用旧的逻辑', 'warning');
+                    progressContainer.innerHTML = moduleInfoHTML + '<div style="color: #FF5722; padding: 10px;">无法获取考核信息</div>';
                 }
 
-                // ============ 改进的翻页检查逻辑 ============
-                const allCourses = Array.from(document.querySelectorAll('.el-table__row'));
-                let allFinished = true;
+                // ============ 获取所有课程 ============
+                const allRows = Array.from(document.querySelectorAll('.el-table__row'));
+                log(`共找到 ${allRows.length} 个课程`);
 
-                for (const row of allCourses) {
-                    const progressTextElement = row.querySelector('.el-progress__text');
-                    if (progressTextElement) {
+                // 如果没有考核信息，使用旧的逻辑
+                if (!assessmentInfo) {
+                    const unfinishedCourses = allRows.filter(row => {
+                        const progressTextElement = row.querySelector('.el-progress__text');
+                        if (!progressTextElement) {
+                            return true;
+                        }
+
                         const progressText = progressTextElement.textContent.trim();
                         const match = progressText.match(/(\d+)/);
-                        if (match) {
-                            const progress = parseInt(match[1], 10);
-                            if (progress < 100) {
-                                allFinished = false;
-                                log(`发现未完成课程: ${row.querySelector('.course-name')?.textContent || '未知'}, 进度: ${progress}%`);
-                                break;
+                        if (!match) {
+                            return true;
+                        }
+
+                        const progress = parseInt(match[1], 10);
+                        return progress < 100;
+                    });
+
+                    log(`找到 ${unfinishedCourses.length} 个未完成课程`);
+
+                    if (unfinishedCourses.length > 0) {
+                        await processUnfinishedCourses(unfinishedCourses, progressContainer, currentModule);
+                        return;
+                    }
+                } else {
+                    // 有考核信息，但未完成，继续学习
+                    // 找出未完成课程（进度<100%）
+                    const unfinishedCourses = allRows.filter(row => {
+                        const progressTextElement = row.querySelector('.el-progress__text');
+                        if (!progressTextElement) {
+                            return true;
+                        }
+
+                        const progressText = progressTextElement.textContent.trim();
+                        const match = progressText.match(/(\d+)/);
+                        if (!match) {
+                            return true;
+                        }
+
+                        const progress = parseInt(match[1], 10);
+                        return progress < 100;
+                    });
+
+                    if (unfinishedCourses.length > 0) {
+                        // 选择第一个未完成课程
+                        const course = unfinishedCourses[0];
+                        const courseName = course.querySelector('.course-name')?.textContent || '未知课程';
+                        const durationCell = course.querySelector('.el-table_1_column_2 .cell');
+                        const duration = durationCell ? durationCell.firstElementChild?.textContent?.trim() : '未知时长';
+                        const progressText = course.querySelector('.el-progress__text')?.textContent.trim() || '0%';
+
+                        const match = progressText.match(/(\d+)/);
+                        const progressPercent = match ? parseInt(match[1], 10) : 0;
+
+                        // 计算该课程的已学学时
+                        const courseCompletedHours = calculateCourseCompletedHours(duration, progressPercent);
+                        log(`课程: ${courseName}, 时长: ${duration}, 进度: ${progressText}, 已学学时: ${courseCompletedHours.toFixed(2)}`);
+
+                        // 如果课程进度已经很高（比如90%以上），跳过它，学习下一个
+                        if (progressPercent >= 90) {
+                            log(`课程进度已达到 ${progressPercent}%，跳过此课程，学习下一个`);
+
+                            // 标记此课程为已跳过（在实际使用中可能需要更复杂的逻辑）
+                            // 这里简单起见，我们只是记录日志
+
+                            // 如果有下一个未完成课程，选择下一个
+                            if (unfinishedCourses.length > 1) {
+                                const nextCourse = unfinishedCourses[1];
+                                const nextCourseName = nextCourse.querySelector('.course-name')?.textContent || '未知课程';
+                                log(`将尝试学习下一个课程: ${nextCourseName}`);
+
+                                // 点击下一个课程的学习按钮
+                                const nextStudyBtn = nextCourse.querySelector('.study-btn');
+                                if (nextStudyBtn) {
+                                    nextStudyBtn.click();
+                                    log(`已点击学习按钮: ${nextCourseName}`);
+                                    await delay(3000);
+                                    return;
+                                }
+                            } else {
+                                log('没有其他未完成课程，尝试翻页');
+                                // 翻页逻辑
                             }
                         } else {
-                            allFinished = false;
-                            break;
+                            // 正常处理课程
+                            course.classList.add('current-course');
+                            log(`开始学习未完成课程: ${courseName}, 时长: ${duration}, 当前进度: ${progressText}`);
+
+                            const studyBtn = course.querySelector('.study-btn');
+                            if (studyBtn) {
+                                studyBtn.click();
+                                log('已点击学习按钮');
+                                await delay(3000);
+                                return;
+                            } else {
+                                log('未找到学习按钮，尝试刷新页面', 'error');
+                                location.reload();
+                            }
                         }
-                    } else {
-                        allFinished = false;
-                        break;
                     }
                 }
 
-                if (!allFinished) {
-                    log('当前页还有未完成课程，不进行翻页');
-                    // 如果发现未完成课程但不是第一个，重新处理
-                    await delay(2000);
-                    await handleCourseListPage();
-                    return;
-                }
-
+                // ============ 翻页检查逻辑 ============
                 // 检查下一页按钮
                 try {
                     const nextPageBtn = await waitForClickableElement('.btn-next:not([disabled])', 5000).catch(() => null);
@@ -761,20 +1018,25 @@
                         await safeClick('.btn-next:not([disabled])');
                         await waitForElement('.el-table__body', 5000);
                         log('下一页加载完成');
-                        retryCount = 0; // 重置重试计数
+                        retryCount = 0;
                         continue;
                     }
 
-                    // 只有当前页所有课程完成且没有下一页时，才显示完成信息
-                    progressContainer.innerHTML = '<div style="color: #4CAF50; font-weight: bold;">所有课程已完成</div>';
-                    log('所有课程已完成');
-                    showAlert('所有课程已完成', 'success');
-                    clearInterval(updateInterval); // 停止定时更新
-                    return;
+                    // 没有下一页，检查是否所有课程都完成
+                    if (assessmentInfo && assessmentInfo.completed >= assessmentInfo.required) {
+                        progressContainer.innerHTML = moduleInfoHTML + '<div style="color: #4CAF50; font-weight: bold; padding: 20px; text-align: center;">🎉 所有考核已完成！</div>';
+                        log('所有考核已完成');
+                        showAlert('所有考核已完成', 'success');
+                        return;
+                    } else {
+                        progressContainer.innerHTML = moduleInfoHTML + '<div style="color: #FF5722; font-weight: bold; padding: 20px; text-align: center;">⚠️ 当前页没有未完成课程，但没有下一页</div>';
+                        log('当前页没有未完成课程，但没有下一页');
+                    }
                 } catch (error) {
                     log(`翻页失败: ${error.message}`, 'error');
                     throw error;
                 }
+
             } catch (error) {
                 retryCount++;
                 log(`处理出错 (${retryCount}/${maxRetries}): ${error.message}`, 'error');
@@ -787,7 +1049,55 @@
         }
     };
 
-    // 处理视频播放页
+    // 原有的处理未完成课程的函数（简化版）
+    const processUnfinishedCourses = async (unfinishedCourses, progressContainer, currentModule) => {
+        if (unfinishedCourses.length === 0) return;
+
+        const course = unfinishedCourses[0];
+        const courseName = course.querySelector('.course-name')?.textContent || '未知课程';
+        const durationCell = course.querySelector('.el-table_1_column_2 .cell');
+        const duration = durationCell ? durationCell.firstElementChild?.textContent?.trim() : '未知时长';
+        const progressText = course.querySelector('.el-progress__text')?.textContent.trim() || '0%';
+
+        const match = progressText.match(/(\d+)/);
+        const progressPercent = match ? parseInt(match[1], 10) : 0;
+
+        if (progressPercent >= 100) {
+            log(`警告：选择的课程进度已经是 ${progressPercent}%，可能存在显示延迟`);
+            log('刷新页面重新检查...');
+            await delay(2000);
+            location.reload();
+            return;
+        }
+
+        course.classList.add('current-course');
+        log(`开始学习未完成课程: ${courseName}, 时长: ${duration}, 当前进度: ${progressText}, 模块: ${currentModule}`);
+
+        // 计算剩余时间
+        let remainingSeconds = 30 * 60;
+        const timeMatch = duration.match(/(\d+):(\d+):(\d+)/) || duration.match(/(\d+):(\d+)/);
+        if (timeMatch) {
+            const totalSeconds = timeMatch[3]
+                ? parseInt(timeMatch[1]) * 3600 + parseInt(timeMatch[2]) * 60 + parseInt(timeMatch[3])
+                : parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]);
+            remainingSeconds = Math.round(totalSeconds * (1 - progressPercent / 100));
+            const adjustedRemainingSeconds = Math.round(remainingSeconds / 3);
+            remainingSeconds = adjustedRemainingSeconds;
+        }
+
+        const studyBtn = course.querySelector('.study-btn');
+        if (studyBtn) {
+            studyBtn.click();
+            log('已点击学习按钮');
+            await delay(6000);
+            return;
+        } else {
+            log('未找到学习按钮，尝试刷新页面', 'error');
+            location.reload();
+        }
+    };
+
+    // 处理视频播放页（保持不变）
     const handleVideoPage = async () => {
         log('开始处理视频播放页...');
 
@@ -855,14 +1165,6 @@
                 // 方法1: 使用简单的点击方法，避免复杂的MouseEvent
                 const body = document.body || document.documentElement;
 
-                // 创建一个简单的点击事件（不设置view属性）
-                const clickEvent = new MouseEvent('click', {
-                    bubbles: true,
-                    cancelable: true,
-                    clientX: 100,
-                    clientY: 100
-                });
-
                 // 直接调用元素的click方法
                 if (body) {
                     body.click();
@@ -890,7 +1192,6 @@
                     document.dispatchEvent(spaceEvent);
                     log('已模拟空格键');
                 } catch (e) {
-                    // 如果创建复杂事件失败，尝试简单方式
                     log(`键盘事件失败，使用简单方式: ${e.message}`, 'warning');
                 }
 
@@ -899,7 +1200,6 @@
 
             } catch (error) {
                 log(`模拟用户交互失败: ${error.message}`, 'error');
-                // 即使失败也不中断流程
             }
         };
 
@@ -948,8 +1248,6 @@
 
                         if (playBtn) {
                             log('尝试点击播放按钮');
-
-                            // 直接调用click方法，避免复杂事件
                             playBtn.click();
 
                             // 再次尝试播放
@@ -970,18 +1268,13 @@
                 }
 
                 if (!success) {
-                    // 等待一段时间后重试
                     await delay(2000);
-
-                    // 每次重试前再次模拟用户交互
                     await simulateUserInteraction();
                 }
             }
 
             if (!success) {
                 log(`经过${maxAttempts}次尝试后，无法播放视频`, 'error');
-
-                // 创建手动播放提示
                 showAlert('需要手动点击播放按钮开始学习', 'error');
             }
 
@@ -1049,8 +1342,6 @@
                 window.location.href = courseListUrl;
             } catch (error) {
                 log(`返回课程列表时出错: ${error.message}`, 'error');
-
-                // 最后尝试直接跳转到默认课程列表
                 showAlert('自动返回失败，将手动跳转到课程列表', 'warning');
                 await delay(2000);
                 window.location.href = 'https://www.ttcdw.cn/p/uc/myClassroom';
