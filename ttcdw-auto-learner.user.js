@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         学习公社云自动播放
 // @namespace    http://tampermonkey.net/
-// @version      0.9.2
-// @description  自动学习网课，完成未完成章节，支持3倍速播放，自动切换通识课/专业课
+// @version      0.9.3
+// @description  自动学习网课，完成未完成章节，支持3倍速播放，自动切换通识课/专业课，屏蔽学习时间限制弹窗
 // @author       yantianyv
 // @match        https://www.ttcdw.cn/p/uc/myClassroom/*
 // @match        https://www.ttcdw.cn/p/course/videorevision/*
@@ -31,6 +31,119 @@
 
         // 更新日志面板
         updateLogPanel(logEntry);
+    };
+
+    // 屏蔽学习时间限制弹窗
+    const blockTimeLimitPopup = () => {
+        try {
+            // 监控DOM变化，检测并移除弹窗
+            const observer = new MutationObserver((mutations) => {
+                mutations.forEach((mutation) => {
+                    if (mutation.addedNodes && mutation.addedNodes.length > 0) {
+                        mutation.addedNodes.forEach((node) => {
+                            // 检查是否是弹窗元素
+                            if (node.nodeType === 1) {
+                                // 检查是否是layui弹窗
+                                if (node.classList &&
+                                    (node.classList.contains('layui-layer') ||
+                                     node.classList.contains('layui-layer-shade'))) {
+                                    log('检测到layui弹窗，尝试移除');
+                                    setTimeout(() => {
+                                        node.remove();
+                                        log('已移除弹窗');
+                                    }, 100);
+                                }
+
+                                // 检查弹窗内容是否包含时间限制相关文本
+                                const text = node.textContent || '';
+                                if (text.includes('该项目课程学习时长每日最多6小时') ||
+                                    text.includes('您今日已累计学习6小时') ||
+                                    text.includes('休息一下明天继续')) {
+                                    log('检测到学习时间限制弹窗，尝试移除');
+                                    setTimeout(() => {
+                                        if (node.parentNode) {
+                                            node.parentNode.removeChild(node);
+                                        }
+                                        // 同时移除遮罩层
+                                        const shade = document.querySelector('.layui-layer-shade');
+                                        if (shade) shade.remove();
+                                        log('已移除时间限制弹窗');
+                                    }, 100);
+                                }
+                            }
+                        });
+                    }
+                });
+            });
+
+            // 开始观察整个文档
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+
+            log('已启动弹窗监控');
+
+            // 立即检查并移除已存在的弹窗
+            setTimeout(() => {
+                const popups = document.querySelectorAll('.layui-layer, .layui-layer-shade');
+                popups.forEach(popup => {
+                    const text = popup.textContent || '';
+                    if (text.includes('该项目课程学习时长每日最多6小时') ||
+                        text.includes('您今日已累计学习6小时') ||
+                        text.includes('休息一下明天继续')) {
+                        popup.remove();
+                        log('已移除已存在的时间限制弹窗');
+                    }
+                });
+            }, 1000);
+
+            // 拦截相关JS请求（可选）
+            const originalXHROpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
+                if (url && url.includes('timeLimit-fbf096fc32.js')) {
+                    log(`拦截时间限制弹窗JS请求: ${url}`);
+                    // 返回空响应，防止弹窗加载
+                    this.open = function() {};
+                    this.send = function() {
+                        this.status = 200;
+                        this.responseText = '// Blocked by auto-learner script';
+                        if (this.onload) this.onload();
+                    };
+                    this.send();
+                    return;
+                }
+                return originalXHROpen.apply(this, arguments);
+            };
+
+            // 拦截fetch请求
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {
+                if (url && url.toString().includes('timeLimit-fbf096fc32.js')) {
+                    log(`拦截时间限制弹窗JS请求(fetch): ${url}`);
+                    return Promise.resolve(new Response('// Blocked by auto-learner script', {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/javascript' }
+                    }));
+                }
+                return originalFetch.call(this, url, options);
+            };
+
+            // 添加CSS样式隐藏弹窗
+            GM_addStyle(`
+                .layui-layer[style*="该项目课程学习时长每日最多6小时"],
+                .layui-layer[style*="您今日已累计学习6小时"],
+                .layui-layer-shade {
+                    display: none !important;
+                    visibility: hidden !important;
+                    opacity: 0 !important;
+                }
+            `);
+
+            return observer;
+        } catch (error) {
+            log(`屏蔽弹窗功能初始化失败: ${error.message}`, 'error');
+        }
     };
 
     // 创建页面弹窗
@@ -497,7 +610,7 @@
                 log('未找到模块选择区域，使用默认模块');
                 return 'unknown';
             }
-            
+
             // 查找激活的模块
             const activeModule = assessItemPart.querySelector('.assess-active');
             if (activeModule) {
@@ -508,23 +621,23 @@
                     return moduleName;
                 }
             }
-            
+
             // 如果没有激活的模块，检查所有模块
             const allModules = assessItemPart.querySelectorAll('.item-title');
             for (const module of allModules) {
                 const moduleName = module.textContent.trim();
                 log(`找到可用模块: ${moduleName}`);
             }
-            
+
             // 默认返回第一个模块的名称
             if (allModules.length > 0) {
                 return allModules[0].textContent.trim();
             }
-            
+
         } catch (error) {
             log(`检测学习模块失败: ${error.message}`, 'error');
         }
-        
+
         return 'unknown';
     };
 
@@ -532,11 +645,11 @@
     const switchToProfessionalCourse = async () => {
         try {
             log('尝试切换到专业课学习...');
-            
+
             // 查找专业课学习选项卡
             const professionalTab = Array.from(document.querySelectorAll('.assessItem-part .item-title'))
                 .find(item => item.textContent.trim() === '专业课学习');
-            
+
             if (professionalTab) {
                 const tabElement = professionalTab.closest('.item-one');
                 if (tabElement) {
@@ -545,14 +658,14 @@
                         log('专业课学习已经是当前模块');
                         return true;
                     }
-                    
+
                     // 点击专业课学习选项卡
                     log('点击专业课学习选项卡...');
                     tabElement.click();
-                    
+
                     // 等待页面刷新/重新加载
                     await delay(3000);
-                    
+
                     // 检查是否切换成功
                     const currentModule = detectLearningModule();
                     if (currentModule === '专业课学习') {
@@ -569,13 +682,13 @@
                 }
             } else {
                 log('未找到专业课学习选项卡', 'warning');
-                
+
                 // 尝试通过URL判断
                 if (window.location.href.includes('center')) {
                     log('检测到在项目中心页面，可能需要重新进入');
                 }
             }
-            
+
             return false;
         } catch (error) {
             log(`切换到专业课学习失败: ${error.message}`, 'error');
@@ -652,7 +765,7 @@
     // 主逻辑
     const main = async () => {
         log('脚本启动...');
-        log(`版本: 0.9.2 - 移除考核完成后的倒计时刷新`);
+        log(`版本: 0.9.3 - 屏蔽学习时间限制弹窗`);
 
         try {
             // 如果是课程列表页面，保存课程列表URL
@@ -665,12 +778,15 @@
 
             log(`当前URL: ${window.location.href}`);
 
+            // 启动弹窗屏蔽功能
+            const popupObserver = blockTimeLimitPopup();
+
             if (window.location.href.includes('/p/uc/myClassroom/')) {
                 log('检测到课程列表页');
                 await handleCourseListPage();
             } else if (window.location.href.includes('/p/course/v/') || window.location.href.includes('/p/course/videorevision/')) {
                 log('检测到视频播放页');
-                await handleVideoPage();
+                await handleVideoPage(popupObserver);
             } else {
                 log('不支持的页面类型');
             }
@@ -785,7 +901,7 @@
                 // ============ 检测当前学习模块 ============
                 const currentModule = detectLearningModule();
                 log(`当前学习模块: ${currentModule}`);
-                
+
                 // 显示模块信息
                 const assessItemPart = document.querySelector('.assessItem-part');
                 let moduleInfoHTML = '';
@@ -847,23 +963,23 @@
                     if (assessmentInfo.completed >= assessmentInfo.required) {
                         log(`✅ ${currentModule}考核已完成! 已完成 ${assessmentInfo.completed}学时，达到要求 ${assessmentInfo.required}学时`);
                         showAlert(`${currentModule}考核已完成！已完成 ${assessmentInfo.completed}学时，达到要求 ${assessmentInfo.required}学时`, 'success');
-                        
+
                         // 检查当前模块
                         if (currentModule === '通识课学习') {
                             // 通识课完成，尝试切换到专业课
                             log('通识课已完成，尝试切换到专业课学习...');
                             const switched = await switchToProfessionalCourse();
-                            
+
                             if (switched) {
                                 log('切换到专业课学习成功，等待页面重新加载...');
                                 await delay(3000);
-                                
+
                                 // 重新开始处理课程列表页
                                 retryCount = 0;
                                 continue;
                             } else {
                                 log('切换到专业课失败，继续检查其他逻辑', 'warning');
-                                
+
                                 // 如果切换失败，显示完成信息
                                 progressContainer.innerHTML = moduleInfoHTML + `
                                     <div id="assessment-info">
@@ -1001,12 +1117,12 @@
                 // 检查下一页按钮
                 try {
                     const nextPageBtn = await waitForClickableElement('.btn-next:not([disabled])', 5000).catch(() => null);
-                    
+
                     // 如果没有下一页按钮
                     if (!nextPageBtn) {
                         // 检查是否有添加选修课按钮
                         const addCourseBtn = document.querySelector('.btn.add-course');
-                        
+
                         if (assessmentInfo && assessmentInfo.completed < assessmentInfo.required) {
                             // 未达到考核要求，显示提示
                             progressContainer.innerHTML = `
@@ -1026,8 +1142,8 @@
                                         <span class="info-value not-completed">${(assessmentInfo.required - assessmentInfo.completed).toFixed(2)}学时</span>
                                     </div>
                                     <div style="margin-top: 15px; text-align: center;">
-                                        ${addCourseBtn ? 
-                                            '<p style="color: #666; margin-bottom: 10px;">当前页没有更多课程，请点击"添加选修课"按钮添加更多课程</p>' : 
+                                        ${addCourseBtn ?
+                                            '<p style="color: #666; margin-bottom: 10px;">当前页没有更多课程，请点击"添加选修课"按钮添加更多课程</p>' :
                                             '<p style="color: #FF5722; margin-bottom: 10px;">当前页没有未完成课程，且没有更多课程可供学习</p>'}
                                         <div style="color: #888; font-size: 12px; margin-top: 10px;">
                                             当前模块: ${currentModule}
@@ -1035,17 +1151,17 @@
                                     </div>
                                 </div>
                             `;
-                            
+
                             log(`⚠️ 考核未完成: 需要 ${assessmentInfo.required}学时，当前已完成 ${assessmentInfo.completed}学时`);
                             log(`当前页没有更多未完成课程，请添加更多课程`);
-                            
+
                             // 如果有卡住的课程，显示特殊提示
                             if (stuckCourses.length > 0) {
                                 const stuckCourseName = stuckCourses[0].querySelector('.course-name')?.textContent || '未知课程';
                                 const stuckProgress = stuckCourses[0].querySelector('.el-progress__text')?.textContent.trim();
                                 showAlert(`注意: 课程"${stuckCourseName}"可能卡在${stuckProgress}，建议手动检查或添加新课程`, 'warning');
                             }
-                            
+
                             // 停止循环，等待用户操作
                             return;
                         } else if (assessmentInfo && assessmentInfo.completed >= assessmentInfo.required) {
@@ -1068,10 +1184,10 @@
                                     </div>
                                 </div>
                             `;
-                            
+
                             log('🎉 所有考核已完成！');
                             showAlert('所有考核已完成！', 'success');
-                            
+
                             // 停止脚本的进一步执行
                             return;
                         } else {
@@ -1131,7 +1247,7 @@
         // 如果课程进度已经很高（比如90%以上），跳过它，学习下一个
         if (progressPercent >= 90 && unfinishedCourses.length > 1) {
             log(`课程进度已达到 ${progressPercent}%，跳过此课程，学习下一个`);
-            
+
             // 选择下一个课程
             const nextCourse = unfinishedCourses[1];
             const nextCourseName = nextCourse.querySelector('.course-name')?.textContent || '未知课程';
@@ -1160,7 +1276,7 @@
     };
 
     // 处理视频播放页
-    const handleVideoPage = async () => {
+    const handleVideoPage = async (popupObserver) => {
         log('开始处理视频播放页...');
 
         // 创建视频页日志容器
@@ -1454,7 +1570,7 @@
 
             toggleBtn.addEventListener('click', () => {
                 isPanelCollapsed = !isPanelCollapsed;
-                
+
                 if (isPanelCollapsed) {
                     panelContent.style.display = 'none';
                     toggleBtn.innerHTML = '▼';
