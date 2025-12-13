@@ -1159,11 +1159,488 @@
         }
     };
 
-    // 处理视频播放页（保持原有逻辑不变）
+    // 处理视频播放页
     const handleVideoPage = async () => {
-        // ... 保持原有代码不变 ...
-        // 由于代码长度限制，这里省略视频播放页的处理逻辑
-        // 您可以保留之前的0.9.1版本中的视频播放页逻辑
+        log('开始处理视频播放页...');
+
+        // 创建视频页日志容器
+        const createVideoLogContainer = () => {
+            if (document.getElementById('auto-learner-video-container')) return;
+
+            const container = document.createElement('div');
+            container.id = 'auto-learner-video-container';
+            container.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                left: 20px;
+                z-index: 99998;
+                width: 320px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+            `;
+            document.body.appendChild(container);
+
+            // 创建日志面板
+            const logPanel = createVideoLogPanel();
+            if (!logPanel.parentNode) {
+                logPanel.style.backgroundColor = 'rgba(0,0,0,0.85)';
+                logPanel.style.color = '#fff';
+                logPanel.style.padding = '10px';
+                logPanel.style.borderRadius = '5px';
+                logPanel.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+                logPanel.style.maxHeight = '150px';
+                logPanel.style.overflow = 'auto';
+                logPanel.style.fontFamily = 'Consolas, Monaco, monospace';
+                logPanel.style.fontSize = '12px';
+                logPanel.style.lineHeight = '1.5';
+                container.appendChild(logPanel);
+            }
+
+            // 创建切换按钮
+            let logToggle = document.getElementById('auto-learner-video-log-toggle');
+            if (!logToggle) {
+                logToggle = document.createElement('div');
+                logToggle.id = 'auto-learner-video-log-toggle';
+                logToggle.textContent = '隐藏日志 ▲';
+                logToggle.style.cursor = 'pointer';
+                logToggle.style.textAlign = 'center';
+                logToggle.style.padding = '5px';
+                logToggle.style.backgroundColor = 'rgba(0,0,0,0.7)';
+                logToggle.style.color = '#fff';
+                logToggle.style.borderRadius = '5px';
+                logToggle.onclick = () => {
+                    logPanel.style.display = logPanel.style.display === 'none' ? 'block' : 'none';
+                    logToggle.textContent = logPanel.style.display === 'none' ? '显示日志 ▲' : '隐藏日志 ▼';
+                };
+                container.appendChild(logToggle);
+            }
+
+            return container;
+        };
+
+        // 创建一个模拟用户交互的函数
+        const simulateUserInteraction = async () => {
+            log('尝试模拟用户交互...');
+
+            try {
+                const body = document.body || document.documentElement;
+                if (body) {
+                    body.click();
+                    log('已点击页面');
+                }
+
+                const videoContainer = document.querySelector('.videoBox') ||
+                                      document.querySelector('.xgplayer') ||
+                                      document.querySelector('#video-Player');
+
+                if (videoContainer) {
+                    videoContainer.click();
+                    log('已点击视频区域');
+                }
+
+                try {
+                    const spaceEvent = new KeyboardEvent('keydown', {
+                        key: ' ',
+                        code: 'Space',
+                        keyCode: 32,
+                        bubbles: true
+                    });
+                    document.dispatchEvent(spaceEvent);
+                    log('已模拟空格键');
+                } catch (e) {
+                    log(`键盘事件失败，使用简单方式: ${e.message}`, 'warning');
+                }
+
+                log('已模拟用户交互');
+                await delay(1000);
+
+            } catch (error) {
+                log(`模拟用户交互失败: ${error.message}`, 'error');
+            }
+        };
+
+        // 增强的视频播放函数
+        const tryPlayVideoEnhanced = async () => {
+            log('开始尝试播放视频...');
+
+            await simulateUserInteraction();
+
+            let success = false;
+            let attempts = 0;
+            const maxAttempts = 5;
+
+            while (!success && attempts < maxAttempts) {
+                attempts++;
+                log(`播放尝试 ${attempts}/${maxAttempts}`);
+
+                try {
+                    const videoElement = document.querySelector('#video-Player video') || document.querySelector('video');
+
+                    if (!videoElement) {
+                        log('未找到video元素', 'error');
+                        await delay(2000);
+                        continue;
+                    }
+
+                    videoElement.muted = true;
+                    log('已设置视频静音');
+
+                    try {
+                        await videoElement.play();
+                        log('视频播放成功');
+                        success = true;
+                    } catch (playError) {
+                        log(`直接播放失败: ${playError.message}`, 'error');
+
+                        const playBtn = document.querySelector('.xgplayer-play') ||
+                                      document.querySelector('.xgplayer-start') ||
+                                      document.querySelector('.xgplayer-play .xgplayer-icon') ||
+                                      document.querySelector('.xgplayer-start .xgplayer-icon');
+
+                        if (playBtn) {
+                            log('尝试点击播放按钮');
+                            playBtn.click();
+
+                            await delay(1500);
+
+                            try {
+                                await videoElement.play();
+                                log('点击播放按钮后播放成功');
+                                success = true;
+                            } catch (retryError) {
+                                log(`重试播放失败: ${retryError.message}`, 'error');
+                            }
+                        }
+                    }
+
+                } catch (error) {
+                    log(`播放尝试出错: ${error.message}`, 'error');
+                }
+
+                if (!success) {
+                    await delay(2000);
+                    await simulateUserInteraction();
+                }
+            }
+
+            if (!success) {
+                log(`经过${maxAttempts}次尝试后，无法播放视频`, 'error');
+                showAlert('需要手动点击播放按钮开始学习', 'error');
+            }
+
+            return success;
+        };
+
+        // 切换到指定索引的视频并尝试播放
+        const switchToVideoAndPlay = async (index) => {
+            const allVideos = Array.from(document.querySelectorAll('.videorevision-catalogue-single'));
+
+            if (index >= 0 && index < allVideos.length) {
+                const videoElement = allVideos[index];
+                const videoName = videoElement.querySelector('.videorevision-catalogue-single-name')?.textContent || `视频${index + 1}`;
+
+                log(`尝试切换到视频: ${videoName}`);
+
+                if (videoElement.classList.contains('on')) {
+                    log('已经是当前视频，尝试直接播放');
+                } else {
+                    const currentSelected = document.querySelector('.videorevision-catalogue-single.on');
+                    if (currentSelected) {
+                        currentSelected.classList.remove('on');
+                    }
+
+                    try {
+                        videoElement.click();
+                        videoElement.classList.add('on');
+                        log(`已点击切换到: ${videoName}`);
+
+                        await delay(4000);
+                    } catch (error) {
+                        log(`切换视频失败: ${error.message}`, 'error');
+                        return false;
+                    }
+                }
+
+                return await tryPlayVideoEnhanced();
+            }
+
+            return false;
+        };
+
+        // 更新状态函数
+        const updateStatus = (message) => {
+            const statusEl = document.getElementById('video-status');
+            if (statusEl) statusEl.textContent = `状态: ${message}`;
+        };
+
+        // 返回课程列表的改进函数
+        const returnToCourseList = async () => {
+            log('准备返回课程列表...');
+            updateStatus('返回课程列表...');
+
+            try {
+                const courseListUrl = getCourseListUrl();
+                log(`返回课程列表URL: ${courseListUrl}`);
+
+                window.location.href = courseListUrl;
+            } catch (error) {
+                log(`返回课程列表时出错: ${error.message}`, 'error');
+                showAlert('自动返回失败，将手动跳转到课程列表', 'warning');
+                await delay(2000);
+                window.location.href = 'https://www.ttcdw.cn/p/uc/myClassroom';
+            }
+        };
+
+        // 创建简化控制面板（带隐藏功能）
+        const createSimpleControlPanel = () => {
+            if (document.getElementById('video-control-panel')) return;
+
+            const panel = document.createElement('div');
+            panel.id = 'video-control-panel';
+            panel.style.cssText = `
+                position: fixed;
+                top: 100px;
+                right: 20px;
+                background: rgba(0,0,0,0.85);
+                color: white;
+                padding: 10px;
+                border-radius: 8px;
+                z-index: 100000;
+                width: 300px;
+                font-family: Arial, sans-serif;
+                border: 2px solid #4CAF50;
+                transition: all 0.3s ease;
+            `;
+
+            panel.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div style="font-weight: bold; color: #4CAF50;">视频控制</div>
+                    <button id="toggle-control-panel" style="background: none; border: none; color: #ccc; cursor: pointer; font-size: 16px; padding: 0 5px;" title="隐藏控制面板">▲</button>
+                </div>
+                <div id="control-panel-content" style="transition: opacity 0.3s ease;">
+                    <div style="font-size: 12px; margin-bottom: 8px;" id="video-status">状态: 初始化...</div>
+                    <div style="font-size: 10px; color: #ccc; margin-bottom: 8px; word-break: break-all;">
+                        课程列表: ${getCourseListUrl()}
+                    </div>
+                    <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                        <button id="manual-play-btn" style="flex: 1; background: #4CAF50; color: white; border: none; padding: 6px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                            手动播放
+                        </button>
+                        <button id="refresh-page-btn" style="flex: 1; background: #2196F3; color: white; border: none; padding: 6px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                            刷新页面
+                        </button>
+                        <button id="mute-btn" style="flex: 1; background: #FF9800; color: white; border: none; padding: 6px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                            静音/取消
+                        </button>
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <button id="return-course-btn" style="width: 100%; background: #9C27B0; color: white; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                            返回课程列表
+                        </button>
+                    </div>
+                    <div style="font-size: 10px; color: #ccc; margin-top: 8px; border-top: 1px solid #444; padding-top: 5px;">
+                        提示: 如果自动播放失败，请手动点击"播放"按钮
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(panel);
+
+            // 添加控制面板隐藏/显示功能
+            const toggleBtn = document.getElementById('toggle-control-panel');
+            const panelContent = document.getElementById('control-panel-content');
+            let isPanelCollapsed = false;
+
+            toggleBtn.addEventListener('click', () => {
+                isPanelCollapsed = !isPanelCollapsed;
+                
+                if (isPanelCollapsed) {
+                    panelContent.style.display = 'none';
+                    toggleBtn.innerHTML = '▼';
+                    toggleBtn.title = '显示控制面板';
+                    panel.style.width = '120px';
+                    panel.style.height = '40px';
+                    panel.style.padding = '5px';
+                    panel.style.overflow = 'hidden';
+                    log('控制面板已隐藏');
+                } else {
+                    panelContent.style.display = 'block';
+                    toggleBtn.innerHTML = '▲';
+                    toggleBtn.title = '隐藏控制面板';
+                    panel.style.width = '300px';
+                    panel.style.height = 'auto';
+                    panel.style.padding = '10px';
+                    panel.style.overflow = 'visible';
+                    log('控制面板已显示');
+                }
+            });
+
+            // 添加其他按钮的事件监听
+            document.getElementById('manual-play-btn').addEventListener('click', async () => {
+                log('手动播放按钮被点击');
+                await tryPlayVideoEnhanced();
+            });
+
+            document.getElementById('refresh-page-btn').addEventListener('click', () => {
+                location.reload();
+            });
+
+            document.getElementById('mute-btn').addEventListener('click', () => {
+                const video = document.querySelector('#video-Player video') || document.querySelector('video');
+                if (video) {
+                    video.muted = !video.muted;
+                    log(`已${video.muted ? '静音' : '取消静音'}视频`);
+                    showAlert(`已${video.muted ? '静音' : '取消静音'}视频`, 'info');
+                }
+            });
+
+            document.getElementById('return-course-btn').addEventListener('click', async () => {
+                log('手动返回课程列表按钮被点击');
+                await returnToCourseList();
+            });
+
+            return panel;
+        };
+
+        try {
+            // 创建视频页日志容器
+            createVideoLogContainer();
+
+            // 等待播放器加载
+            log('等待视频播放器加载...');
+            await waitForElement('#video-Player', 15000);
+            log('视频播放器加载完成');
+
+            // 创建控制面板
+            createSimpleControlPanel();
+
+            // 先模拟一次用户交互
+            updateStatus('模拟用户交互...');
+            await simulateUserInteraction();
+
+            // 获取所有视频
+            const allVideos = Array.from(document.querySelectorAll('.videorevision-catalogue-single'));
+            log(`共找到 ${allVideos.length} 个视频章节`);
+
+            // 查找第一个未完成的视频
+            let targetVideoIndex = -1;
+
+            for (let i = 0; i < allVideos.length; i++) {
+                const video = allVideos[i];
+                const progressText = video.querySelector('.videorevision-catalogue-single-progress-text')?.textContent;
+                const match = progressText ? progressText.match(/(\d+)%/) : null;
+                const progress = match ? parseInt(match[1]) : 0;
+
+                if (progress < 100) {
+                    targetVideoIndex = i;
+                    log(`找到未完成视频: 索引 ${i}, 进度 ${progress}%`);
+                    break;
+                }
+            }
+
+            if (targetVideoIndex === -1) {
+                log('所有视频都已完成，返回课程列表');
+                updateStatus('所有视频已完成');
+                showAlert('所有视频学习完成，即将返回课程列表', 'success');
+                await delay(3000);
+                await returnToCourseList();
+                return;
+            }
+
+            // 切换到未完成的视频并尝试播放
+            updateStatus(`切换到视频 ${targetVideoIndex + 1}...`);
+            const playSuccess = await switchToVideoAndPlay(targetVideoIndex);
+
+            if (playSuccess) {
+                updateStatus(`视频 ${targetVideoIndex + 1} 播放中`);
+                log('视频开始播放，开始监控进度');
+            } else {
+                updateStatus('播放失败，请手动操作');
+                log('自动播放失败，等待手动操作', 'warning');
+            }
+
+            // 设置监控间隔
+            let checkCount = 0;
+            const monitorInterval = setInterval(async () => {
+                try {
+                    checkCount++;
+
+                    // 检查视频是否在播放
+                    const videoElement = document.querySelector('#video-Player video') || document.querySelector('video');
+                    const isPlaying = videoElement && !videoElement.paused;
+
+                    // 确保视频静音
+                    if (videoElement && !videoElement.muted) {
+                        videoElement.muted = true;
+                        log('检测到视频未静音，已重新设置静音');
+                    }
+
+                    if (!isPlaying && checkCount % 3 === 0) {
+                        // 每3次检查尝试重新播放
+                        log('检测到视频未播放，尝试重新播放');
+                        updateStatus('尝试重新播放...');
+                        await tryPlayVideoEnhanced();
+                    }
+
+                    // 检查当前视频进度
+                    const currentVideo = document.querySelector('.videorevision-catalogue-single.on');
+                    if (currentVideo) {
+                        const progressText = currentVideo.querySelector('.videorevision-catalogue-single-progress-text')?.textContent;
+                        const match = progressText ? progressText.match(/(\d+)%/) : null;
+                        const progress = match ? parseInt(match[1]) : 0;
+
+                        if (progress >= 100) {
+                            log(`当前视频完成 (${progress}%)，准备下一个`);
+                            updateStatus(`视频完成 ${progress}%`);
+
+                            const currentIndex = Array.from(allVideos).indexOf(currentVideo);
+                            if (currentIndex < allVideos.length - 1) {
+                                // 切换到下一个视频
+                                const nextIndex = currentIndex + 1;
+                                const nextPlaySuccess = await switchToVideoAndPlay(nextIndex);
+                                if (nextPlaySuccess) {
+                                    // 新视频开始播放后，确保静音
+                                    const nextVideoElement = document.querySelector('#video-Player video') || document.querySelector('video');
+                                    if (nextVideoElement) {
+                                        nextVideoElement.muted = true;
+                                        log('切换到新视频，已设置静音');
+                                    }
+                                }
+                            } else {
+                                log('所有视频已完成，返回课程列表');
+                                updateStatus('所有视频完成');
+                                clearInterval(monitorInterval);
+
+                                showAlert('所有视频学习完成，即将返回课程列表', 'success');
+                                await delay(3000);
+                                await returnToCourseList();
+                            }
+                        } else {
+                            updateStatus(`播放中 (${progress}%)`);
+                        }
+                    }
+
+                    // 设置倍速为3.0
+                    const video = document.querySelector('video') || document.querySelector('#video-Player video');
+                    if (video && video.playbackRate !== 3.0 && !isNaN(video.duration)) {
+                        video.playbackRate = 3.0;
+                        if (checkCount === 1) {
+                            log('已设置3倍速播放');
+                        }
+                    }
+
+                } catch (error) {
+                    log(`监控出错: ${error.message}`, 'error');
+                }
+            }, 10000);
+
+        } catch (error) {
+            log(`初始化视频页出错: ${error.message}`, 'error');
+            showAlert('初始化视频页失败');
+            await delay(5000);
+            location.reload();
+        }
     };
 
     // 确保DOM加载完成后执行
